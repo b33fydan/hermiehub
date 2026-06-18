@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no" />
+    <title>HermieHub</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #151515;
+        --panel: #f7f4eb;
+        --ink: #171717;
+        --muted: #6d6a62;
+        --line: #d8d2c4;
+        --field: #ece8de;
+        --accent: #f4dd89;
+        --ok: #35d07f;
+        --bad: #ff5d5d;
+      }
+
+      * { box-sizing: border-box; }
+
+      html, body {
+        margin: 0;
+        min-height: 100%;
+        background: #efeee9;
+        color: var(--ink);
+        font: 15px/1.4 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+        touch-action: manipulation;
+        -webkit-text-size-adjust: 100%;
+        overscroll-behavior: none;
+      }
+
+      body {
+        display: flex;
+        justify-content: center;
+        padding: 24px;
+      }
+
+      #app {
+        width: min(560px, 100%);
+      }
+
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 18px;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 34px;
+        letter-spacing: -0.04em;
+      }
+
+      .icon-row { display: flex; gap: 8px; }
+      .icon {
+        width: 38px;
+        height: 38px;
+        border-radius: 12px;
+        border: 1px solid var(--line);
+        background: white;
+        display: grid;
+        place-items: center;
+      }
+
+      .card {
+        background: white;
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        overflow: hidden;
+        box-shadow: 0 14px 40px rgba(0,0,0,0.06);
+      }
+
+      .card-head, .status, .section {
+        padding: 18px;
+      }
+
+      .card-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-weight: 750;
+        font-size: 18px;
+      }
+
+      .divider { height: 1px; background: var(--line); }
+
+      .status {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        color: var(--muted);
+        font-weight: 650;
+      }
+
+      .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 99px;
+        background: var(--bad);
+      }
+
+      .dot.connected { background: var(--ok); }
+
+      .hint {
+        color: var(--muted);
+        margin: 0 0 18px;
+      }
+
+      label {
+        display: block;
+        font-weight: 700;
+        margin: 14px 0 7px;
+      }
+
+      input, textarea, select {
+        width: 100%;
+        border: 0;
+        outline: none;
+        border-radius: 14px;
+        background: var(--field);
+        color: var(--ink);
+        padding: 14px;
+        font: inherit;
+      }
+
+      textarea { min-height: 86px; resize: vertical; }
+
+      button {
+        width: 100%;
+        border: 0;
+        border-radius: 16px;
+        padding: 15px 16px;
+        margin-top: 16px;
+        background: var(--accent);
+        color: var(--ink);
+        font: inherit;
+        font-weight: 800;
+      }
+
+      button.secondary { background: var(--field); }
+
+      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+      .voice-btn {
+        width: 100%;
+        border: 0;
+        border-radius: 16px;
+        padding: 18px 16px;
+        margin-top: 10px;
+        background: #d4f5e0;
+        color: var(--ink);
+        font: inherit;
+        font-weight: 800;
+        font-size: 17px;
+        letter-spacing: 0.01em;
+      }
+
+      .voice-btn:disabled { opacity: 0.45; }
+      .log {
+        margin-top: 14px;
+        border-radius: 14px;
+        background: #171717;
+        color: #d6ffd6;
+        padding: 12px;
+        min-height: 76px;
+        white-space: pre-wrap;
+        font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+
+      .tiny { font-size: 12px; color: var(--muted); margin-top: 10px; }
+    </style>
+  </head>
+  <body>
+    <main id="app">
+      <div class="topbar">
+        <h1>HermieHub</h1>
+        <div class="icon-row">
+          <div class="icon">☰</div>
+          <div class="icon">↻</div>
+        </div>
+      </div>
+
+      <section class="card">
+        <div class="card-head">
+          <span>Relay Server</span>
+          <span>⌃</span>
+        </div>
+        <div class="divider"></div>
+        <div class="status"><span id="dot" class="dot"></span><span id="status">Disconnected</span></div>
+        <div class="divider"></div>
+        <div class="section">
+          <p class="hint">Enter the HermieHub relay URL and token, then connect. The G2 becomes a tiny agent command surface.</p>
+
+          <label for="address">Address</label>
+          <input id="address" placeholder="wss://hostname" autocomplete="off" />
+
+          <label for="token">Token</label>
+          <input id="token" placeholder="Relay token" autocomplete="off" type="password" />
+
+          <button id="connect">Connect</button>
+
+          <label for="agent">Agent</label>
+          <select id="agent">
+            <option value="hermes">Hermes / Bernie</option>
+            <option value="codex">Codex</option>
+          </select>
+
+          <label for="prompt">Command</label>
+          <textarea id="prompt" placeholder="Talk to Hermes/Bernie…"></textarea>
+          <div class="grid">
+            <button id="send">Send to Agent</button>
+            <button id="demo" class="secondary">Demo HUD</button>
+          </div>
+          <button id="voice" class="voice-btn" disabled>🎤 Voice</button>
+          <div id="log" class="log">HermieHub companion ready.</div>
+          <div class="tiny">Prototype v0.1 · Tap glasses cycles cards · Double-tap exits · Voice needs relay connected.</div>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

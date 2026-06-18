@@ -1,0 +1,14 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+out.ehpk
+
+# secret — relay auth token, keep this LOCAL only
+.relay-token
+
+# misc
+.DS_Store
+*.log
+coverage/

@@ -1,0 +1,29 @@
+{
+  "name": "hermiehub",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 5175",
+    "relay": "node server/hermie-relay.mjs",
+    "build": "tsc --noEmit && vite build",
+    "test": "vitest run",
+    "preview": "vite preview",
+    "pack": "evenhub pack app.json dist",
+    "simulate": "evenhub-simulator http://localhost:5175"
+  },
+  "dependencies": {
+    "@evenrealities/even_hub_sdk": "^0.0.10",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@evenrealities/evenhub-cli": "^0.1.12",
+    "@evenrealities/evenhub-simulator": "^0.7.2",
+    "@types/node": "^24.10.1",
+    "@types/ws": "^8.18.1",
+    "concurrently": "^9.2.1",
+    "typescript": "^5.7.0",
+    "vite": "^5.4.0",
+    "vitest": "^4.1.9"
+  }
+}
