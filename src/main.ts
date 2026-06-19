@@ -7,6 +7,7 @@ import {
 } from '@evenrealities/even_hub_sdk'
 import { createEndpointer, type EndpointerResult } from './endpointer'
 import { reconnectDelayMs } from './reconnect'
+import { chatEntryFromRelay, type ChatEntry } from './chatlog'
 
 type RelayState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting'
 type VoiceState = 'idle' | 'listening' | 'processing'
@@ -49,6 +50,7 @@ const logEl = $<HTMLDivElement>('log')
 const statusEl = $<HTMLSpanElement>('status')
 const dotEl = $<HTMLSpanElement>('dot')
 const lensMirror = $<HTMLDivElement>('lensMirror')
+const chatEl = $<HTMLDivElement>('chat')
 
 let bridge: Awaited<ReturnType<typeof waitForEvenAppBridge>> | null = null
 let bridgeReady = false
@@ -101,6 +103,26 @@ const cards = [
     '3. Bernie replies on lens\n' +
     'Swipe to flip cards',
 ]
+
+// Render a chat entry as a bubble in the conversation panel and scroll to it.
+function appendChat(entry: ChatEntry) {
+  const empty = chatEl.querySelector('.chat-empty')
+  if (empty) empty.remove()
+  const bubble = document.createElement('div')
+  bubble.className = `bubble ${entry.role}`
+  if (entry.role === 'agent' && entry.label) {
+    const lbl = document.createElement('div')
+    lbl.className = 'bubble-label'
+    lbl.textContent = entry.label
+    bubble.appendChild(lbl)
+  }
+  const body = document.createElement('div')
+  body.className = 'bubble-text'
+  body.textContent = entry.text
+  bubble.appendChild(body)
+  chatEl.appendChild(bubble)
+  chatEl.scrollTop = chatEl.scrollHeight
+}
 
 function appendLog(line: string) {
   const stamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -237,6 +259,9 @@ function sendSocket(payload: Record<string, unknown>) {
 function handleRelayMessage(msg: RelayMessage) {
   const line = msg.text || msg.hud || msg.message || msg.error || JSON.stringify(msg)
   appendLog(`${msg.type || 'relay'}: ${line}`)
+
+  const chatEntry = chatEntryFromRelay(msg)
+  if (chatEntry) appendChat(chatEntry)
 
   if (msg.type === 'transcript' && msg.text) {
     promptInput.value = msg.text
@@ -512,9 +537,17 @@ promptInput.value = 'Bernie, what should I build on Even G2 next?'
 voiceButton.disabled = true // enabled once bridge + relay are ready
 
 connectButton.addEventListener('click', connectRelay)
-sendButton.addEventListener('click', () =>
-  sendSocket({ type: 'prompt', agent: agentInput.value, prompt: promptInput.value }),
-)
+function sendTypedPrompt() {
+  const text = promptInput.value.trim()
+  if (!text) return
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
+    appendLog('Not connected to relay.')
+    return
+  }
+  sendSocket({ type: 'prompt', agent: agentInput.value, prompt: text })
+  appendChat({ role: 'user', text })
+}
+sendButton.addEventListener('click', sendTypedPrompt)
 demoButton.addEventListener('click', () => sendSocket({ type: 'demo' }))
 voiceButton.addEventListener('click', toggleVoice)
 agentInput.addEventListener('change', () => {
