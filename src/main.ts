@@ -45,6 +45,7 @@ const voiceButton = $<HTMLButtonElement>('voice')
 const logEl = $<HTMLDivElement>('log')
 const statusEl = $<HTMLSpanElement>('status')
 const dotEl = $<HTMLSpanElement>('dot')
+const lensMirror = $<HTMLDivElement>('lensMirror')
 
 let bridge: Awaited<ReturnType<typeof waitForEvenAppBridge>> | null = null
 let bridgeReady = false
@@ -198,7 +199,14 @@ function currentHud() {
   return [`HERMIEHUB ${cardIndex + 1}/${cards.length}`, '------------------------------', body].join('\n')
 }
 
+// Mirror the exact glasses HUD string into the companion "lens preview" so the
+// phone (or desktop) can be screen-recorded. Updates on every HUD change.
+function renderLensMirror() {
+  if (lensMirror) lensMirror.textContent = currentHud()
+}
+
 async function rebuildHud() {
+  renderLensMirror()
   if (!bridge) return
   await bridge.rebuildPageContainer(
     new RebuildPageContainer({ containerTotalNum: 1, textObject: [createText(currentHud())] }),
@@ -377,28 +385,29 @@ async function bootGlasses() {
       return
     }
 
-    const sysType = event.sysEvent?.eventType ?? null
-    const textType = event.textEvent?.eventType ?? null
+    // Drive control from sysEvent (the system gesture stream). The text-container
+    // touch (textEvent) is raw down/up noise, so we ignore it here.
+    const sysEvt = event.sysEvent
+    if (!sysEvt) return
 
-    if (sysType === OsEventTypeList.DOUBLE_CLICK_EVENT || textType === OsEventTypeList.DOUBLE_CLICK_EVENT) {
+    // NOTE: protobuf omits zero-valued fields on the wire, so CLICK_EVENT
+    // (eventType 0) arrives with eventType ABSENT (undefined), not 0.
+    const sysType = sysEvt.eventType
+
+    if (sysType === OsEventTypeList.DOUBLE_CLICK_EVENT) {
       if (voiceState === 'listening') bridge?.audioControl(false).catch(console.error)
       socket?.close()
       bridge?.shutDownPageContainer(1)
       return
     }
 
-    if (sysType === OsEventTypeList.CLICK_EVENT || textType === OsEventTypeList.CLICK_EVENT) {
-      toggleVoice()
-      return
-    }
-
-    if (sysType === OsEventTypeList.SCROLL_TOP_EVENT || textType === OsEventTypeList.SCROLL_TOP_EVENT) {
+    if (sysType === OsEventTypeList.SCROLL_TOP_EVENT) {
       cardIndex = (cardIndex - 1 + cards.length) % cards.length
       rebuildHud().catch(console.error)
       return
     }
 
-    if (sysType === OsEventTypeList.SCROLL_BOTTOM_EVENT || textType === OsEventTypeList.SCROLL_BOTTOM_EVENT) {
+    if (sysType === OsEventTypeList.SCROLL_BOTTOM_EVENT) {
       cardIndex = (cardIndex + 1) % cards.length
       rebuildHud().catch(console.error)
       return
@@ -417,6 +426,14 @@ async function bootGlasses() {
       if (voiceState === 'listening') bridge?.audioControl(false).catch(console.error)
       socket?.close()
       unsubscribe()
+      return
+    }
+
+    // Single tap = talk. CLICK_EVENT (0) is omitted on the wire, so a sysEvent
+    // that matched none of the above (eventType absent, or an explicit 0) is a tap.
+    if (sysType === undefined || sysType === OsEventTypeList.CLICK_EVENT) {
+      toggleVoice()
+      return
     }
   })
 }
@@ -438,6 +455,8 @@ agentInput.addEventListener('change', () => {
   localStorage.setItem('hermiehub.agent', agentInput.value)
   rebuildHud().catch(console.error)
 })
+
+renderLensMirror() // paint the first HUD frame immediately
 
 bootGlasses().catch(error => {
   appendLog(`Bridge boot failed: ${error instanceof Error ? error.message : String(error)}`)

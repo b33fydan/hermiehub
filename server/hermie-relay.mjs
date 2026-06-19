@@ -23,6 +23,7 @@ const TOKEN_PATH = process.env.HERMIE_RELAY_TOKEN_FILE || path.join(PROJECT_ROOT
 const RELAY_TOKEN = process.env.HERMIE_RELAY_TOKEN || fs.readFileSync(TOKEN_PATH, 'utf8').trim()
 const CODEX_BIN = process.env.CODEX_BIN || 'codex'
 const HERMES_BIN = process.env.HERMES_BIN || 'hermes'
+const USER_NAME = process.env.HERMIE_USER_NAME || 'the user'
 const AGENT_TIMEOUT_MS = Number(process.env.HERMIE_AGENT_TIMEOUT_MS || process.env.CODEX_TIMEOUT_MS || 45_000)
 const MAX_PROMPT_CHARS = 1400
 const MAX_REPLY_CHARS = 1400
@@ -188,7 +189,7 @@ function runAgent(agent, prompt) {
     const isHermes = agent === 'hermes'
     const agentName = isHermes ? 'Hermes/Bernie' : 'Codex'
     const instruction = [
-      `You are ${agentName}, replying to Dan through Even Realities G2 smart glasses via HermieHub.`,
+      `You are ${agentName}, replying to ${USER_NAME} through Even Realities G2 smart glasses via HermieHub.`,
       'Keep the answer useful, punchy, and HUD-friendly.',
       'No markdown tables. Max 8 short lines unless absolutely necessary.',
       'If the user asks for longer work, acknowledge it and say the full result should go to Telegram/desktop.',

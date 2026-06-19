@@ -45,9 +45,12 @@ SDK only emits discrete gestures.
   (the relay falls back to `openai-whisper` if present)
 - A whisper model, e.g. `~/.cache/whisper.cpp/ggml-base.en.bin`
 - `ffmpeg` — `brew install ffmpeg`
-- An agent CLI on PATH: `hermes` and/or `codex`
+- An agent CLI on PATH — `codex` (public) or your own. `hermes` is the author's
+  personal agent ("Bernie"); bring your own and point the relay at it (see [SETUP.md](SETUP.md))
 
 ## Setup
+
+> Full step-by-step walkthrough (relay, agent, tunnel, install): **[SETUP.md](SETUP.md)**.
 
 ```bash
 npm install
