@@ -6,8 +6,9 @@ import {
   OsEventTypeList,
 } from '@evenrealities/even_hub_sdk'
 import { createEndpointer, type EndpointerResult } from './endpointer'
+import { reconnectDelayMs } from './reconnect'
 
-type RelayState = 'disconnected' | 'connecting' | 'connected'
+type RelayState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting'
 type VoiceState = 'idle' | 'listening' | 'processing'
 type RelayMessage = {
   type?: string
@@ -32,6 +33,8 @@ const MIN_SPEECH_MS = 300 // speech required before auto-stop can arm
 const MAX_UTTERANCE_MS = 15_000 // hard cutoff — always sends, never hangs
 const LEAD_GRACE_MS = 4000 // if no speech by now, cancel quietly
 
+const MAX_RECONNECT_ATTEMPTS = 10 // give up auto-reconnect after this many tries
+
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
 
 const addressInput = $<HTMLInputElement>('address')
@@ -51,6 +54,10 @@ let bridge: Awaited<ReturnType<typeof waitForEvenAppBridge>> | null = null
 let bridgeReady = false
 let socket: WebSocket | null = null
 let relayState: RelayState = 'disconnected'
+let userClosed = false // true when the user (not a drop) ended the connection
+let reconnectAttempts = 0
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+let lastWsUrl: string | null = null
 let voiceState: VoiceState = 'idle'
 let lastHud = 'HERMIEHUB\nEnter relay URL + token.\nConnect to arm the wearable agent bridge.'
 let cardIndex = 0
@@ -159,10 +166,16 @@ function setVoiceState(next: VoiceState) {
 
 function setRelayState(next: RelayState) {
   relayState = next
-  statusEl.textContent = next[0].toUpperCase() + next.slice(1)
+  statusEl.textContent = next === 'reconnecting' ? 'Reconnecting…' : next[0].toUpperCase() + next.slice(1)
   dotEl.classList.toggle('connected', next === 'connected')
   connectButton.textContent =
-    next === 'connected' ? 'Disconnect' : next === 'connecting' ? 'Connecting…' : 'Connect'
+    next === 'connected'
+      ? 'Disconnect'
+      : next === 'connecting'
+        ? 'Connecting…'
+        : next === 'reconnecting'
+          ? 'Cancel'
+          : 'Connect'
   if (voiceState === 'idle') voiceButton.disabled = !voiceAvailable()
   rebuildHud().catch(console.error)
 }
@@ -244,8 +257,71 @@ function handleRelayMessage(msg: RelayMessage) {
   rebuildHud().catch(console.error)
 }
 
+function clearReconnect() {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer)
+    reconnectTimer = null
+  }
+  reconnectAttempts = 0
+}
+
+function scheduleReconnect() {
+  if (!lastWsUrl || reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+    if (lastWsUrl) appendLog(`Gave up reconnecting after ${reconnectAttempts} tries. Tap Connect to retry.`)
+    reconnectAttempts = 0
+    setRelayState('disconnected')
+    return
+  }
+  reconnectAttempts += 1
+  const delay = reconnectDelayMs(reconnectAttempts)
+  setRelayState('reconnecting')
+  appendLog(`Relay dropped. Reconnecting in ${Math.round(delay / 1000)}s (try ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})…`)
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null
+    if (lastWsUrl && !userClosed) openSocket(lastWsUrl)
+  }, delay)
+}
+
+function openSocket(wsUrl: string) {
+  lastWsUrl = wsUrl
+  if (relayState !== 'reconnecting') setRelayState('connecting')
+
+  socket = new WebSocket(wsUrl)
+  socket.addEventListener('open', () => {
+    reconnectAttempts = 0
+    setRelayState('connected')
+    appendLog('Relay connected.')
+    sendSocket({ type: 'ping' })
+  })
+  socket.addEventListener('message', event => {
+    try { handleRelayMessage(JSON.parse(String(event.data))) }
+    catch { appendLog(`raw: ${String(event.data)}`) }
+  })
+  socket.addEventListener('close', () => {
+    socket = null
+    if (userClosed) {
+      setRelayState('disconnected')
+      appendLog('Relay disconnected.')
+      return
+    }
+    scheduleReconnect()
+  })
+  socket.addEventListener('error', () => { appendLog('Relay socket error.') })
+}
+
 function connectRelay() {
+  // Cancel an in-progress auto-reconnect.
+  if (relayState === 'reconnecting') {
+    userClosed = true
+    clearReconnect()
+    setRelayState('disconnected')
+    appendLog('Reconnect cancelled.')
+    return
+  }
+  // Disconnect if currently connected.
   if (socket && socket.readyState === WebSocket.OPEN) {
+    userClosed = true
+    clearReconnect()
     socket.close()
     return
   }
@@ -264,24 +340,10 @@ function connectRelay() {
   localStorage.setItem('hermiehub.address', addressInput.value.trim())
   localStorage.setItem('hermiehub.token', token)
 
-  setRelayState('connecting')
+  userClosed = false
+  reconnectAttempts = 0
   appendLog(`Connecting to ${wsUrl.replace(token, '••••')}`)
-
-  socket = new WebSocket(wsUrl)
-  socket.addEventListener('open', () => {
-    setRelayState('connected')
-    appendLog('Relay connected.')
-    sendSocket({ type: 'ping' })
-  })
-  socket.addEventListener('message', event => {
-    try { handleRelayMessage(JSON.parse(String(event.data))) }
-    catch { appendLog(`raw: ${String(event.data)}`) }
-  })
-  socket.addEventListener('close', () => {
-    setRelayState('disconnected')
-    appendLog('Relay disconnected.')
-  })
-  socket.addEventListener('error', () => { appendLog('Relay socket error.') })
+  openSocket(wsUrl)
 }
 
 // Open the glasses mic via the Even bridge and start collecting PCM.
@@ -396,6 +458,8 @@ async function bootGlasses() {
 
     if (sysType === OsEventTypeList.DOUBLE_CLICK_EVENT) {
       if (voiceState === 'listening') bridge?.audioControl(false).catch(console.error)
+      userClosed = true
+      clearReconnect()
       socket?.close()
       bridge?.shutDownPageContainer(1)
       return
@@ -424,6 +488,8 @@ async function bootGlasses() {
 
     if (sysType === OsEventTypeList.SYSTEM_EXIT_EVENT || sysType === OsEventTypeList.ABNORMAL_EXIT_EVENT) {
       if (voiceState === 'listening') bridge?.audioControl(false).catch(console.error)
+      userClosed = true
+      clearReconnect()
       socket?.close()
       unsubscribe()
       return
