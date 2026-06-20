@@ -8,6 +8,7 @@ import {
 import { createEndpointer, type EndpointerResult } from './endpointer'
 import { reconnectDelayMs } from './reconnect'
 import { chatEntryFromRelay, type ChatEntry } from './chatlog'
+import { isConnectionStale } from './heartbeat'
 
 type RelayState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting'
 type VoiceState = 'idle' | 'listening' | 'processing'
@@ -35,6 +36,9 @@ const MAX_UTTERANCE_MS = 15_000 // hard cutoff — always sends, never hangs
 const LEAD_GRACE_MS = 4000 // if no speech by now, cancel quietly
 
 const MAX_RECONNECT_ATTEMPTS = 10 // give up auto-reconnect after this many tries
+const CLIENT_HEARTBEAT_MS = 25_000 // app-level ping cadence (under the tunnel's ~100s idle cap)
+const RELAY_SILENCE_MS = 40_000 // no message for this long → treat the socket as dead
+const PROCESSING_TIMEOUT_MS = 150_000 // give up waiting for a reply after this (> max STT+agent time)
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
 
@@ -60,6 +64,9 @@ let userClosed = false // true when the user (not a drop) ended the connection
 let reconnectAttempts = 0
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let lastWsUrl: string | null = null
+let heartbeatTimer: ReturnType<typeof setInterval> | null = null
+let lastRelayMessageAt = 0
+let processingTimer: ReturnType<typeof setTimeout> | null = null
 let voiceState: VoiceState = 'idle'
 let lastHud = 'HERMIEHUB\nEnter relay URL + token.\nConnect to arm the wearable agent bridge.'
 let cardIndex = 0
@@ -167,6 +174,8 @@ function concatChunks(chunks: Uint8Array[]): Uint8Array {
 
 function setVoiceState(next: VoiceState) {
   voiceState = next
+  if (next === 'processing') armProcessingWatchdog()
+  else clearProcessingWatchdog()
   if (next === 'listening') {
     voiceButton.textContent = '🔴 Listening… (tap to send)'
     voiceButton.style.background = 'var(--bad)'
@@ -263,6 +272,9 @@ function handleRelayMessage(msg: RelayMessage) {
   const chatEntry = chatEntryFromRelay(msg)
   if (chatEntry) appendChat(chatEntry)
 
+  // Any message while processing is proof of life — push the no-response timeout out.
+  if (voiceState === 'processing') armProcessingWatchdog()
+
   if (msg.type === 'transcript' && msg.text) {
     promptInput.value = msg.text
     lastHud = `YOU SAID\n${msg.text}`
@@ -280,6 +292,45 @@ function handleRelayMessage(msg: RelayMessage) {
 
   cardIndex = 0
   rebuildHud().catch(console.error)
+}
+
+function clearProcessingWatchdog() {
+  if (processingTimer) {
+    clearTimeout(processingTimer)
+    processingTimer = null
+  }
+}
+
+function armProcessingWatchdog() {
+  clearProcessingWatchdog()
+  processingTimer = setTimeout(() => {
+    if (voiceState !== 'processing') return
+    appendLog('No response from the agent — reset.')
+    lastHud = 'NO RESPONSE\nAgent went quiet.\nTap to try again.'
+    setVoiceState('idle')
+    rebuildHud().catch(console.error)
+  }, PROCESSING_TIMEOUT_MS)
+}
+
+function stopHeartbeat() {
+  if (heartbeatTimer) {
+    clearInterval(heartbeatTimer)
+    heartbeatTimer = null
+  }
+}
+
+function startHeartbeat() {
+  stopHeartbeat()
+  lastRelayMessageAt = Date.now()
+  heartbeatTimer = setInterval(() => {
+    if (!socket || socket.readyState !== WebSocket.OPEN) return
+    if (isConnectionStale(lastRelayMessageAt, Date.now(), RELAY_SILENCE_MS)) {
+      appendLog('No heartbeat from relay — reconnecting.')
+      socket.close() // triggers the reconnect path in the close handler
+      return
+    }
+    sendSocket({ type: 'ping' })
+  }, CLIENT_HEARTBEAT_MS)
 }
 
 function clearReconnect() {
@@ -316,14 +367,23 @@ function openSocket(wsUrl: string) {
     reconnectAttempts = 0
     setRelayState('connected')
     appendLog('Relay connected.')
+    startHeartbeat()
     sendSocket({ type: 'ping' })
   })
   socket.addEventListener('message', event => {
+    lastRelayMessageAt = Date.now()
     try { handleRelayMessage(JSON.parse(String(event.data))) }
     catch { appendLog(`raw: ${String(event.data)}`) }
   })
   socket.addEventListener('close', () => {
     socket = null
+    stopHeartbeat()
+    if (voiceState === 'processing') {
+      appendLog('Connection dropped while waiting for a reply — reset.')
+      lastHud = 'CONNECTION HICCUP\nReply was lost.\nTap to try again.'
+      setVoiceState('idle')
+      rebuildHud().catch(console.error)
+    }
     if (userClosed) {
       setRelayState('disconnected')
       appendLog('Relay disconnected.')
