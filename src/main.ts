@@ -10,6 +10,7 @@ import { reconnectDelayMs } from './reconnect'
 import { chatEntryFromRelay, type ChatEntry } from './chatlog'
 import { isConnectionStale } from './heartbeat'
 import { paginate } from './paginate'
+import { hudFromRelay } from './hud'
 
 type RelayState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting'
 type VoiceState = 'idle' | 'listening' | 'processing'
@@ -277,6 +278,8 @@ function sendSocket(payload: Record<string, unknown>) {
 }
 
 function handleRelayMessage(msg: RelayMessage) {
+  if (msg.type === 'pong') return // keepalive — refreshes the silence watchdog only, never the HUD/log
+
   const line = msg.text || msg.hud || msg.message || msg.error || JSON.stringify(msg)
   appendLog(`${msg.type || 'relay'}: ${line}`)
 
@@ -286,23 +289,17 @@ function handleRelayMessage(msg: RelayMessage) {
   // Any message while processing is proof of life — push the no-response timeout out.
   if (voiceState === 'processing') armProcessingWatchdog()
 
-  if (msg.type === 'transcript' && msg.text) {
-    promptInput.value = msg.text
-    lastHud = `YOU SAID\n${msg.text}`
-  } else if (msg.hud) {
-    lastHud = msg.hud
-  } else if (msg.type === 'agent_started') {
-    lastHud = 'AGENT COOKING\n' + (msg.message || 'Agent started.')
-  } else if (msg.type === 'agent_result') {
-    const label = msg.source === 'hermes' ? 'BERNIE' : String(msg.source || 'AGENT').toUpperCase()
-    lastHud = `${msg.ok ? `${label} SAYS` : `${label} ERROR`}\n${msg.text || msg.error || 'No response.'}`
-    setVoiceState('idle')
-  } else if (msg.message) {
-    lastHud = `HERMIEHUB\n${msg.message}`
-  }
+  if (msg.type === 'transcript' && msg.text) promptInput.value = msg.text
+  if (msg.type === 'agent_result') setVoiceState('idle')
 
-  cardIndex = 0
-  pageIndex = 0
+  // Update the HUD only when the message has something to show — keepalive pongs
+  // return null, so the heartbeat never wipes the last reply.
+  const nextHud = hudFromRelay(msg)
+  if (nextHud !== null) {
+    lastHud = nextHud
+    cardIndex = 0
+    pageIndex = 0
+  }
   rebuildHud().catch(console.error)
 }
 
