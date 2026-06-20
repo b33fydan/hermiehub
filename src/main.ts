@@ -9,6 +9,7 @@ import { createEndpointer, type EndpointerResult } from './endpointer'
 import { reconnectDelayMs } from './reconnect'
 import { chatEntryFromRelay, type ChatEntry } from './chatlog'
 import { isConnectionStale } from './heartbeat'
+import { paginate } from './paginate'
 
 type RelayState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting'
 type VoiceState = 'idle' | 'listening' | 'processing'
@@ -32,13 +33,16 @@ const GLASSES_SAMPLE_RATE = 16_000
 const SILENCE_RMS_THRESHOLD = 0.015 // normalized loudness below which a window is "silent"
 const SILENCE_HANGOVER_MS = 1500 // silence after speech that ends the utterance
 const MIN_SPEECH_MS = 300 // speech required before auto-stop can arm
-const MAX_UTTERANCE_MS = 15_000 // hard cutoff — always sends, never hangs
+const MAX_UTTERANCE_MS = 20_000 // hard cutoff — always sends, never hangs
 const LEAD_GRACE_MS = 4000 // if no speech by now, cancel quietly
 
 const MAX_RECONNECT_ATTEMPTS = 10 // give up auto-reconnect after this many tries
 const CLIENT_HEARTBEAT_MS = 25_000 // app-level ping cadence (under the tunnel's ~100s idle cap)
 const RELAY_SILENCE_MS = 40_000 // no message for this long → treat the socket as dead
 const PROCESSING_TIMEOUT_MS = 150_000 // give up waiting for a reply after this (> max STT+agent time)
+
+const HUD_LINE_CHARS = 40 // approx characters per lens line (tunable)
+const HUD_PAGE_LINES = 5 // body lines shown per lens page (tunable)
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
 
@@ -70,6 +74,7 @@ let processingTimer: ReturnType<typeof setTimeout> | null = null
 let voiceState: VoiceState = 'idle'
 let lastHud = 'HERMIEHUB\nEnter relay URL + token.\nConnect to arm the wearable agent bridge.'
 let cardIndex = 0
+let pageIndex = 0
 
 // Captured glasses-mic audio between audioControl(true) and audioControl(false).
 let pcmChunks: Uint8Array[] = []
@@ -238,9 +243,15 @@ function createText(content: string) {
   })
 }
 
+function currentPages() {
+  return paginate(cards[cardIndex](), { maxLineChars: HUD_LINE_CHARS, maxLines: HUD_PAGE_LINES })
+}
+
 function currentHud() {
-  const body = cards[cardIndex]()
-  return [`HERMIEHUB ${cardIndex + 1}/${cards.length}`, '------------------------------', body].join('\n')
+  const pages = currentPages()
+  const page = Math.min(pageIndex, pages.length - 1)
+  const pageTag = pages.length > 1 ? ` ·${page + 1}/${pages.length}` : ''
+  return [`HERMIEHUB ${cardIndex + 1}/${cards.length}${pageTag}`, '------------------------------', pages[page]].join('\n')
 }
 
 // Mirror the exact glasses HUD string into the companion "lens preview" so the
@@ -291,6 +302,7 @@ function handleRelayMessage(msg: RelayMessage) {
   }
 
   cardIndex = 0
+  pageIndex = 0
   rebuildHud().catch(console.error)
 }
 
@@ -486,6 +498,7 @@ async function cancelListening(note: string) {
   appendLog(note)
   lastHud = `NO INPUT\n${note}`
   cardIndex = 0
+  pageIndex = 0
   setVoiceState('idle')
   rebuildHud().catch(console.error)
 }
@@ -551,13 +564,23 @@ async function bootGlasses() {
     }
 
     if (sysType === OsEventTypeList.SCROLL_TOP_EVENT) {
-      cardIndex = (cardIndex - 1 + cards.length) % cards.length
+      if (pageIndex > 0) {
+        pageIndex -= 1
+      } else {
+        cardIndex = (cardIndex - 1 + cards.length) % cards.length
+        pageIndex = currentPages().length - 1
+      }
       rebuildHud().catch(console.error)
       return
     }
 
     if (sysType === OsEventTypeList.SCROLL_BOTTOM_EVENT) {
-      cardIndex = (cardIndex + 1) % cards.length
+      if (pageIndex < currentPages().length - 1) {
+        pageIndex += 1
+      } else {
+        cardIndex = (cardIndex + 1) % cards.length
+        pageIndex = 0
+      }
       rebuildHud().catch(console.error)
       return
     }

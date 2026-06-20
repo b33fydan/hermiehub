@@ -26,7 +26,7 @@ const HERMES_BIN = process.env.HERMES_BIN || 'hermes'
 const USER_NAME = process.env.HERMIE_USER_NAME || 'the user'
 const AGENT_TIMEOUT_MS = Number(process.env.HERMIE_AGENT_TIMEOUT_MS || process.env.CODEX_TIMEOUT_MS || 45_000)
 const MAX_PROMPT_CHARS = 1400
-const MAX_REPLY_CHARS = 1400
+const MAX_REPLY_CHARS = 2000
 
 const clients = new Set()
 let lastSeq = 0
