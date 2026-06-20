@@ -265,6 +265,21 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocketServer({ noServer: true })
 
+const HEARTBEAT_MS = Number(process.env.HERMIE_HEARTBEAT_MS || 30_000)
+
+// Reap dead/half-open sockets and keep live ones warm through the tunnel.
+const heartbeat = setInterval(() => {
+  for (const ws of wss.clients) {
+    if (ws.isAlive === false) {
+      ws.terminate()
+      continue
+    }
+    ws.isAlive = false
+    try { ws.ping() } catch { /* socket already gone */ }
+  }
+}, HEARTBEAT_MS)
+wss.on('close', () => clearInterval(heartbeat))
+
 server.on('upgrade', (req, socket, head) => {
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`)
   if (url.pathname !== '/relay') {
@@ -285,6 +300,8 @@ server.on('upgrade', (req, socket, head) => {
 
 wss.on('connection', (ws, req) => {
   clients.add(ws)
+  ws.isAlive = true
+  ws.on('pong', () => { ws.isAlive = true })
   const remote = req.socket.remoteAddress
   send(ws, {
     type: 'hello',
