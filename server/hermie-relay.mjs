@@ -183,6 +183,16 @@ function authFromRequest(req) {
   return queryToken || bearerToken
 }
 
+// Real client IP behind the Cloudflare tunnel (falls back to the local socket).
+function clientIp(req) {
+  return (
+    req.headers['cf-connecting-ip'] ||
+    (req.headers['x-forwarded-for'] || '').split(',')[0].trim() ||
+    req.socket?.remoteAddress ||
+    'unknown'
+  )
+}
+
 function runAgent(agent, prompt) {
   return new Promise((resolve) => {
     const safePrompt = String(prompt || '').slice(0, MAX_PROMPT_CHARS)
@@ -259,6 +269,7 @@ const server = http.createServer((req, res) => {
     return
   }
 
+  console.warn(`[${nowIso()}] PROBE http ${req.method} ${url.pathname} from ${clientIp(req)} ua="${req.headers['user-agent'] || ''}"`)
   res.writeHead(404, { 'content-type': 'text/plain' })
   res.end('Not found')
 })
@@ -283,11 +294,13 @@ wss.on('close', () => clearInterval(heartbeat))
 server.on('upgrade', (req, socket, head) => {
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`)
   if (url.pathname !== '/relay') {
+    console.warn(`[${nowIso()}] PROBE ws-upgrade ${url.pathname} from ${clientIp(req)} ua="${req.headers['user-agent'] || ''}"`)
     socket.destroy()
     return
   }
 
   if (authFromRequest(req) !== RELAY_TOKEN) {
+    console.warn(`[${nowIso()}] 401 unauthorized /relay from ${clientIp(req)} ua="${req.headers['user-agent'] || ''}"`)
     socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n')
     socket.destroy()
     return
